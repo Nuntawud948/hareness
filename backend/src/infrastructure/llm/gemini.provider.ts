@@ -12,7 +12,7 @@ export class GeminiProvider implements ILLMProvider {
     const startTime = Date.now();
     const genAI = new GoogleGenerativeAI(options.apiKey);
 
-    const modelName = options.modelId || 'gemini-2.0-flash';
+    const modelName = options.modelId || 'gemini-3.6-flash';
     const model = genAI.getGenerativeModel({
       model: modelName,
       systemInstruction: options.systemPrompt || undefined,
@@ -63,7 +63,7 @@ export class GeminiProvider implements ILLMProvider {
   async healthCheck(apiKey: string): Promise<{ ok: boolean; error?: string }> {
     try {
       const genAI = new GoogleGenerativeAI(apiKey);
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+      const model = genAI.getGenerativeModel({ model: 'gemini-3.6-flash' });
       await model.generateContent('ping');
       return { ok: true };
     } catch (err: any) {

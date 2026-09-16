@@ -21,7 +21,7 @@ export class GeminiVisionReceiptScanner {
     mimeType: string = 'image/jpeg'
   ): Promise<ParsedReceiptData> {
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-3.6-flash' });
 
     const base64Image = imageBuffer.toString('base64');
 
