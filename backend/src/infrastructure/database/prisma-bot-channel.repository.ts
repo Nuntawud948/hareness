@@ -32,6 +32,8 @@ export class PrismaBotChannelRepository implements IBotChannelRepository {
         ...(data.telegramWebhookSecret !== undefined && {
           telegramWebhookSecret: data.telegramWebhookSecret,
         }),
+        ...(data.discordBotToken !== undefined && { discordBotToken: data.discordBotToken }),
+        ...(data.discordApplicationId !== undefined && { discordApplicationId: data.discordApplicationId }),
         ...(data.isActive !== undefined && { isActive: data.isActive }),
         ...(data.webhookUrl !== undefined && { webhookUrl: data.webhookUrl }),
         ...(data.lastVerifiedAt !== undefined && { lastVerifiedAt: data.lastVerifiedAt }),
@@ -44,6 +46,8 @@ export class PrismaBotChannelRepository implements IBotChannelRepository {
         lineAccessToken: data.lineAccessToken || null,
         telegramBotToken: data.telegramBotToken || null,
         telegramWebhookSecret: data.telegramWebhookSecret || null,
+        discordBotToken: data.discordBotToken || null,
+        discordApplicationId: data.discordApplicationId || null,
         isActive: data.isActive ?? false,
         webhookUrl: data.webhookUrl || null,
         lastVerifiedAt: data.lastVerifiedAt || null,

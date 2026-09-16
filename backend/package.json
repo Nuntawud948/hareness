@@ -25,6 +25,7 @@
     "@line/bot-sdk": "^9.7.1",
     "@prisma/client": "^6.4.1",
     "bcryptjs": "^3.0.2",
+    "discord.js": "^14.27.0",
     "dotenv": "^16.4.7",
     "fastify": "^5.2.1",
     "googleapis": "^181.0.0",

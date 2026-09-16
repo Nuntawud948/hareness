@@ -5,6 +5,8 @@ export interface UpdateBotChannelDto {
   lineAccessToken?: string | null;
   telegramBotToken?: string | null;
   telegramWebhookSecret?: string | null;
+  discordBotToken?: string | null;
+  discordApplicationId?: string | null;
   isActive?: boolean;
   webhookUrl?: string | null;
   lastVerifiedAt?: Date | null;

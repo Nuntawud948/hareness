@@ -15,10 +15,17 @@ const updateTelegramSchema = z.object({
   isActive: z.boolean().optional(),
 });
 
+const updateDiscordSchema = z.object({
+  discordBotToken: z.string().optional(),
+  discordApplicationId: z.string().optional(),
+  isActive: z.boolean().optional(),
+});
+
 export function registerChannelsRoutes(
   app: FastifyInstance,
   manageBotChannelsUseCase: ManageBotChannelsUseCase,
-  serverBaseUrl: string
+  serverBaseUrl: string,
+  onDiscordTokenUpdated?: (token: string) => Promise<void>
 ) {
   app.register(async (protectedRoutes) => {
     protectedRoutes.addHook('preHandler', app.authenticate);
@@ -57,11 +64,32 @@ export function registerChannelsRoutes(
       return reply.send({ success: true, message: 'Telegram channel configuration saved.' });
     });
 
+    // Update Discord channel credentials
+    protectedRoutes.put('/api/channels/discord', async (request: FastifyRequest, reply: FastifyReply) => {
+      const parseResult = updateDiscordSchema.safeParse(request.body);
+      if (!parseResult.success) {
+        return reply.status(400).send({
+          error: 'Validation failed',
+          details: parseResult.error.format(),
+        });
+      }
+
+      await manageBotChannelsUseCase.updateDiscordChannel(parseResult.data);
+      if (parseResult.data.discordBotToken && onDiscordTokenUpdated) {
+        try {
+          await onDiscordTokenUpdated(parseResult.data.discordBotToken);
+        } catch (e: any) {
+          console.error('Failed to restart Discord bot on token update:', e.message);
+        }
+      }
+      return reply.send({ success: true, message: 'Discord channel configuration saved.' });
+    });
+
     // Verify channel credentials against platform API
     protectedRoutes.post('/api/channels/:platform/verify', async (request: FastifyRequest, reply: FastifyReply) => {
       const { platform } = request.params as { platform: string };
-      if (platform !== 'line' && platform !== 'telegram') {
-        return reply.status(400).send({ error: 'Platform must be line or telegram' });
+      if (platform !== 'line' && platform !== 'telegram' && platform !== 'discord') {
+        return reply.status(400).send({ error: 'Platform must be line, telegram, or discord' });
       }
 
       const result = await manageBotChannelsUseCase.verifyChannel(platform as BotPlatform);

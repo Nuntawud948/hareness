@@ -2,13 +2,19 @@ import { BotPlatform } from '../../domain/entities/bot-channel.entity.js';
 import { EntityNotFoundError, ValidationError } from '../../domain/errors/domain.error.js';
 import { IBotChannelRepository } from '../../domain/repositories/i-bot-channel.repository.js';
 import { IEncryptionService } from '../../domain/services/i-encryption.service.js';
-import { ILineMessagingGateway, ITelegramMessagingGateway } from '../../domain/services/i-messaging-gateway.js';
+import {
+  ILineMessagingGateway,
+  ITelegramMessagingGateway,
+  IDiscordMessagingGateway,
+} from '../../domain/services/i-messaging-gateway.js';
 
 export interface UpdateBotChannelRequestDto {
   lineChannelSecret?: string;
   lineAccessToken?: string;
   telegramBotToken?: string;
   telegramWebhookSecret?: string;
+  discordBotToken?: string;
+  discordApplicationId?: string;
   isActive?: boolean;
 }
 
@@ -18,9 +24,12 @@ export interface BotChannelResponseDto {
   hasLineChannelSecret: boolean;
   hasLineAccessToken: boolean;
   hasTelegramBotToken: boolean;
+  hasDiscordBotToken: boolean;
   maskedLineChannelSecret?: string;
   maskedLineAccessToken?: string;
   maskedTelegramBotToken?: string;
+  maskedDiscordBotToken?: string;
+  discordApplicationId?: string | null;
   isActive: boolean;
   webhookUrl: string;
   lastVerifiedAt?: Date | null;
@@ -35,14 +44,15 @@ export class ManageBotChannelsUseCase {
     private readonly botChannelRepo: IBotChannelRepository,
     private readonly encryptionService: IEncryptionService,
     private readonly lineGateway: ILineMessagingGateway,
-    private readonly telegramGateway: ITelegramMessagingGateway
+    private readonly telegramGateway: ITelegramMessagingGateway,
+    private readonly discordGateway?: IDiscordMessagingGateway
   ) {}
 
   async getAll(serverBaseUrl: string): Promise<BotChannelResponseDto[]> {
     const channels = await this.botChannelRepo.findAll();
     const result: BotChannelResponseDto[] = [];
 
-    const platforms: BotPlatform[] = ['line', 'telegram'];
+    const platforms: BotPlatform[] = ['line', 'telegram', 'discord'];
 
     for (const platform of platforms) {
       let ch = channels.find((c) => c.platform === platform);
@@ -86,7 +96,23 @@ export class ManageBotChannelsUseCase {
         }
       }
 
-      const webhookPath = platform === 'line' ? '/webhook/line' : '/webhook/telegram';
+      const hasDiscordToken = Boolean(ch.discordBotToken && ch.discordBotToken.length > 0);
+      let maskedDiscordToken: string | undefined;
+      if (hasDiscordToken) {
+        try {
+          const dec = this.encryptionService.decrypt(ch.discordBotToken!);
+          maskedDiscordToken = this.encryptionService.mask(dec);
+        } catch {
+          maskedDiscordToken = '****[Decryption Error]';
+        }
+      }
+
+      const webhookPath =
+        platform === 'line'
+          ? '/webhook/line'
+          : platform === 'telegram'
+          ? '/webhook/telegram'
+          : '/gateway/discord';
       const cleanBase = serverBaseUrl.endsWith('/') ? serverBaseUrl.slice(0, -1) : serverBaseUrl;
       const fullWebhookUrl = `${cleanBase}${webhookPath}`;
 
@@ -96,9 +122,12 @@ export class ManageBotChannelsUseCase {
         hasLineChannelSecret: hasLineSecret,
         hasLineAccessToken: hasLineToken,
         hasTelegramBotToken: hasTelegramToken,
+        hasDiscordBotToken: hasDiscordToken,
         maskedLineChannelSecret: maskedLineSecret,
         maskedLineAccessToken: maskedLineToken,
         maskedTelegramBotToken: maskedTgToken,
+        maskedDiscordBotToken: maskedDiscordToken,
+        discordApplicationId: ch.discordApplicationId,
         isActive: ch.isActive,
         webhookUrl: fullWebhookUrl,
         lastVerifiedAt: ch.lastVerifiedAt,
@@ -158,6 +187,29 @@ export class ManageBotChannelsUseCase {
     });
   }
 
+  async updateDiscordChannel(data: {
+    discordBotToken?: string;
+    discordApplicationId?: string;
+    isActive?: boolean;
+  }): Promise<void> {
+    let discordBotToken: string | undefined = undefined;
+    let discordApplicationId: string | undefined = undefined;
+
+    if (data.discordBotToken && data.discordBotToken.trim().length > 0) {
+      discordBotToken = this.encryptionService.encrypt(data.discordBotToken.trim());
+    }
+
+    if (data.discordApplicationId !== undefined) {
+      discordApplicationId = data.discordApplicationId.trim() || undefined;
+    }
+
+    await this.botChannelRepo.upsert('discord', {
+      discordBotToken,
+      discordApplicationId,
+      isActive: data.isActive,
+    });
+  }
+
   async verifyChannel(platform: BotPlatform): Promise<{
     ok: boolean;
     botName?: string;
@@ -212,6 +264,33 @@ export class ManageBotChannelsUseCase {
           lastVerifiedAt: new Date(),
           botDisplayName: check.botName || 'Telegram Bot',
           botAvatarUrl: check.botAvatarUrl || null,
+        });
+      }
+      return check;
+    }
+
+    if (platform === 'discord') {
+      if (!ch.discordBotToken) {
+        return { ok: false, error: 'Discord Bot Token is missing.' };
+      }
+      if (!this.discordGateway) {
+        return { ok: false, error: 'Discord Gateway service is not initialized.' };
+      }
+
+      let token = '';
+      try {
+        token = this.encryptionService.decrypt(ch.discordBotToken);
+      } catch (err: any) {
+        return { ok: false, error: `Decryption error: ${err.message}` };
+      }
+
+      const check = await this.discordGateway.verifyCredentials(token);
+      if (check.ok) {
+        await this.botChannelRepo.upsert('discord', {
+          lastVerifiedAt: new Date(),
+          botDisplayName: check.botName || 'Discord Bot',
+          botAvatarUrl: check.botAvatarUrl || null,
+          ...(check.botId && !ch.discordApplicationId ? { discordApplicationId: check.botId } : {}),
         });
       }
       return check;

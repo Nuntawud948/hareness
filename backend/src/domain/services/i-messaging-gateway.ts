@@ -21,3 +21,13 @@ export interface ITelegramMessagingGateway {
     error?: string;
   }>;
 }
+
+export interface IDiscordMessagingGateway {
+  verifyCredentials(botToken: string): Promise<{
+    ok: boolean;
+    botName?: string;
+    botAvatarUrl?: string;
+    botId?: string;
+    error?: string;
+  }>;
+}

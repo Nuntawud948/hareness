@@ -60,6 +60,8 @@ model BotChannel {
   lineAccessToken       String?   // AES-256-GCM encrypted
   telegramBotToken      String?   // AES-256-GCM encrypted
   telegramWebhookSecret String?   // Webhook secret header verification
+  discordBotToken       String?   // AES-256-GCM encrypted
+  discordApplicationId  String?   // Application / Client ID for invite link
   isActive              Boolean   @default(true)
   webhookUrl            String?   // Displayed on UI for copying into Bot developer console
   lastVerifiedAt        DateTime?

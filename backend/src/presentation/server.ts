@@ -170,11 +170,36 @@ export async function buildServer() {
     providersMap
   );
 
+  // Assistant & Receipt Services (Google Drive 5TB + Gemini Vision OCR + Discord)
+  const { GoogleDriveStorageService } = await import('../infrastructure/storage/google-drive.storage.js');
+  const { GeminiVisionReceiptScanner } = await import('../infrastructure/llm/gemini-vision.service.js');
+  const { DiscordBotService } = await import('../infrastructure/messaging/discord-bot.service.js');
+  const { ProcessReceiptImageUseCase } = await import('../application/use-cases/process-receipt-image.use-case.js');
+  const { ArchiveMonthlyLogsUseCase } = await import('../application/use-cases/archive-monthly-logs.use-case.js');
+  const { registerArchiveController } = await import('./controllers/archive.controller.js');
+
+  const storageService = new GoogleDriveStorageService(prisma);
+  const visionScanner = new GeminiVisionReceiptScanner();
+  const discordBotService = new DiscordBotService(
+    prisma,
+    botChannelRepo,
+    providerKeyRepo,
+    conversationHistoryRepo,
+    systemPromptRepo,
+    userPreferenceRepo,
+    availableModelRepo,
+    encryptionService,
+    storageService,
+    visionScanner,
+    routeLLMQueryUseCase
+  );
+
   const manageBotChannelsUseCase = new ManageBotChannelsUseCase(
     botChannelRepo,
     encryptionService,
     lineGateway,
-    telegramGateway
+    telegramGateway,
+    discordBotService
   );
 
   const manageSystemPromptUseCase = new ManageSystemPromptUseCase(systemPromptRepo);
@@ -194,15 +219,6 @@ export async function buildServer() {
 
   const getUsageStatsUseCase = new GetUsageStatsUseCase(usageLogRepo);
 
-  // Assistant & Receipt Services (Google Drive 5TB + Gemini Vision OCR)
-  const { GoogleDriveStorageService } = await import('../infrastructure/storage/google-drive.storage.js');
-  const { GeminiVisionReceiptScanner } = await import('../infrastructure/llm/gemini-vision.service.js');
-  const { ProcessReceiptImageUseCase } = await import('../application/use-cases/process-receipt-image.use-case.js');
-  const { ArchiveMonthlyLogsUseCase } = await import('../application/use-cases/archive-monthly-logs.use-case.js');
-  const { registerArchiveController } = await import('./controllers/archive.controller.js');
-
-  const storageService = new GoogleDriveStorageService(prisma);
-  const visionScanner = new GeminiVisionReceiptScanner();
   const processReceiptImageUseCase = new ProcessReceiptImageUseCase(
     prisma,
     botChannelRepo,
@@ -231,11 +247,38 @@ export async function buildServer() {
     processReceiptImageUseCase
   );
   registerKeysRoutes(app, manageProviderKeysUseCase, routeLLMQueryUseCase, availableModelRepo);
-  registerChannelsRoutes(app, manageBotChannelsUseCase, serverBaseUrl);
+  registerChannelsRoutes(
+    app,
+    manageBotChannelsUseCase,
+    serverBaseUrl,
+    async (token: string) => {
+      await discordBotService.start(token);
+    }
+  );
   registerPromptRoutes(app, manageSystemPromptUseCase);
   registerPushRoutes(app, sendPushMessageUseCase, sseManager);
   registerUsageRoutes(app, getUsageStatsUseCase);
   registerArchiveController(app, archiveMonthlyLogsUseCase);
+
+  // Attempt to start Discord bot if configured and active
+  botChannelRepo
+    .findByPlatform('discord')
+    .then(async (discordCh) => {
+      if (discordCh?.isActive && discordCh.discordBotToken) {
+        try {
+          const decToken = encryptionService.decrypt(discordCh.discordBotToken);
+          if (decToken) {
+            await discordBotService.start(decToken);
+            console.log('🤖 Discord Bot started successfully on application boot.');
+          }
+        } catch (err: any) {
+          console.warn('⚠️ Could not start Discord bot on startup:', err.message);
+        }
+      }
+    })
+    .catch((err) => {
+      console.warn('⚠️ Discord channel check failed:', err.message);
+    });
 
   // Health check endpoint
   app.get('/health', async () => {
