@@ -21,9 +21,29 @@ export class GeminiVisionReceiptScanner {
     mimeType: string = 'image/jpeg'
   ): Promise<ParsedReceiptData> {
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.6-flash' });
+    // Use gemini-3.1-flash-lite (500 RPD quota) instead of gemini-3.6-flash (20 RPD)
+    const visionModels = ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.5-flash'];
+    let lastErr: any = null;
 
-    const base64Image = imageBuffer.toString('base64');
+    for (const modelName of visionModels) {
+      try {
+        const model = genAI.getGenerativeModel({ model: modelName });
+        const base64Image = imageBuffer.toString('base64');
+        return await this.executeOcr(model, base64Image, mimeType);
+      } catch (err: any) {
+        console.warn(`Vision model ${modelName} failed (${err.status || err.message}), trying next candidate...`);
+        lastErr = err;
+      }
+    }
+
+    throw lastErr || new Error('All vision OCR models failed');
+  }
+
+  private async executeOcr(
+    model: any,
+    base64Image: string,
+    mimeType: string
+  ): Promise<ParsedReceiptData> {
 
     const prompt = `You are an expert AI Secretary and Accountant. Analyze this receipt or bill image accurately.
 Extract the information and respond ONLY with a raw JSON object (without markdown fences, backticks, or other text).
