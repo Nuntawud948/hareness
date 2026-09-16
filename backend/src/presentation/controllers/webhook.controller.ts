@@ -15,8 +15,8 @@ export function registerWebhookRoutes(
   lineGateway: ILineMessagingGateway,
   processReceiptImageUseCase?: ProcessReceiptImageUseCase
 ) {
-  // ── LINE Webhook ──
-  app.post('/webhook/line', async (request: FastifyRequest, reply: FastifyReply) => {
+  // ── LINE Webhook Handler ──
+  const lineWebhookHandler = async (request: FastifyRequest, reply: FastifyReply) => {
     const signature = (request.headers['x-line-signature'] as string) || '';
 
     // 1. Fetch channel config
@@ -81,10 +81,14 @@ export function registerWebhookRoutes(
         }
       }
     }
-  });
+  };
 
-  // ── Telegram Webhook ──
-  app.post('/webhook/telegram', async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post('/webhook/line', lineWebhookHandler);
+  app.post('/api/webhook/line', lineWebhookHandler);
+  app.post('/api/webhooks/line', lineWebhookHandler);
+
+  // ── Telegram Webhook Handler ──
+  const telegramWebhookHandler = async (request: FastifyRequest, reply: FastifyReply) => {
     const channel = await botChannelRepo.findByPlatform('telegram');
     if (!channel || !channel.isActive || !channel.telegramBotToken) {
       return reply.status(503).send({ error: 'Telegram channel not configured or inactive.' });
@@ -120,5 +124,9 @@ export function registerWebhookRoutes(
           console.error('Error processing Telegram update:', err);
         });
     }
-  });
+  };
+
+  app.post('/webhook/telegram', telegramWebhookHandler);
+  app.post('/api/webhook/telegram', telegramWebhookHandler);
+  app.post('/api/webhooks/telegram', telegramWebhookHandler);
 }
