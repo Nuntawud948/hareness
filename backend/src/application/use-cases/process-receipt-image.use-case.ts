@@ -6,6 +6,8 @@ import { ILineMessagingGateway } from '../../domain/services/i-messaging-gateway
 import { IStorageService } from '../../domain/services/i-storage.service.js';
 import { GeminiVisionReceiptScanner, ParsedReceiptData } from '../../infrastructure/llm/gemini-vision.service.js';
 
+import { IConversationHistoryRepository } from '../../domain/repositories/i-conversation-history.repository.js';
+
 export interface ProcessReceiptImageInput {
   platform: 'line' | 'telegram';
   userId: string;
@@ -21,7 +23,8 @@ export class ProcessReceiptImageUseCase {
     private readonly encryptionService: IEncryptionService,
     private readonly lineGateway: ILineMessagingGateway,
     private readonly storageService: IStorageService,
-    private readonly visionScanner: GeminiVisionReceiptScanner
+    private readonly visionScanner: GeminiVisionReceiptScanner,
+    private readonly conversationHistoryRepo?: IConversationHistoryRepository
   ) {}
 
   async execute(input: ProcessReceiptImageInput): Promise<void> {
@@ -177,5 +180,24 @@ export class ProcessReceiptImageUseCase {
     }
 
     await this.lineGateway.replyMessage(replyToken, replyText, channelAccessToken);
+
+    if (this.conversationHistoryRepo) {
+      try {
+        await this.conversationHistoryRepo.appendMessage(
+          platform,
+          userId,
+          'user',
+          `[แนบรูปบิลใบเสร็จ: ร้าน "${receiptData.merchantName}", ยอดรวม ${receiptData.totalAmount} ${receiptData.currency}, วันที่: ${receiptData.billDate}, หมวดหมู่: ${receiptData.category}]`
+        );
+        await this.conversationHistoryRepo.appendMessage(
+          platform,
+          userId,
+          'assistant',
+          replyText
+        );
+      } catch (histErr) {
+        console.warn('Failed to append receipt to conversation history:', histErr);
+      }
+    }
   }
 }

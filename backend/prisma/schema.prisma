@@ -169,3 +169,16 @@ model TaskReminder {
   @@index([remindAt, isNotified])
 }
 
+// ─── 11. Storage / Google Drive Configuration ───
+model StorageConfig {
+  id               String   @id @default("google_drive")
+  provider         String   @default("google_drive")
+  clientId         String?
+  clientSecret     String?
+  refreshToken     String?
+  folderId         String?
+  folderName       String?  @default("Receipt_Bills")
+  isActive         Boolean  @default(true)
+  updatedAt        DateTime @updatedAt
+}
+

@@ -1,17 +1,20 @@
+import { PrismaClient } from '@prisma/client';
 import { google } from 'googleapis';
 import { Readable } from 'stream';
 import { IStorageService, UploadResult } from '../../domain/services/i-storage.service.js';
 
 export class GoogleDriveStorageService implements IStorageService {
   private driveClient: any = null;
-  private readonly targetFolderId: string | undefined;
+  private targetFolderId: string | undefined;
+  private prisma?: PrismaClient;
 
-  constructor() {
+  constructor(prisma?: PrismaClient) {
+    this.prisma = prisma;
     this.targetFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
-    this.initClient();
+    this.initClientFromEnv();
   }
 
-  private initClient(): void {
+  private initClientFromEnv(): void {
     const oauthClientId = process.env.GOOGLE_CLIENT_ID;
     const oauthClientSecret = process.env.GOOGLE_CLIENT_SECRET;
     const oauthRefreshToken = process.env.GOOGLE_REFRESH_TOKEN;
@@ -27,7 +30,7 @@ export class GoogleDriveStorageService implements IStorageService {
         );
         oauth2Client.setCredentials({ refresh_token: oauthRefreshToken });
         this.driveClient = google.drive({ version: 'v3', auth: oauth2Client });
-        console.log('✅ GoogleDriveStorageService: Initialized with OAuth2 (User 5TB Drive)');
+        console.log('✅ GoogleDriveStorageService: Initialized with OAuth2 from ENV (User 5TB Drive)');
       } else if (serviceAccountJson) {
         const credentials = JSON.parse(serviceAccountJson);
         const auth = new google.auth.GoogleAuth({
@@ -44,8 +47,95 @@ export class GoogleDriveStorageService implements IStorageService {
         this.driveClient = google.drive({ version: 'v3', auth });
       }
     } catch (err) {
-      console.warn('⚠️ GoogleDriveStorageService: Could not initialize Google Drive credentials.', err);
+      console.warn('⚠️ GoogleDriveStorageService: Could not initialize Google Drive from ENV.', err);
       this.driveClient = null;
+    }
+  }
+
+  private async ensureClient(): Promise<boolean> {
+    if (this.driveClient) return true;
+
+    // Try loading from database StorageConfig
+    if (this.prisma) {
+      try {
+        const config = await (this.prisma as any).storageConfig.findUnique({
+          where: { id: 'google_drive' },
+        });
+
+        if (config && config.isActive && config.clientId && config.clientSecret && config.refreshToken) {
+          const oauth2Client = new google.auth.OAuth2(
+            config.clientId,
+            config.clientSecret
+          );
+          oauth2Client.setCredentials({ refresh_token: config.refreshToken });
+          this.driveClient = google.drive({ version: 'v3', auth: oauth2Client });
+          if (config.folderId) {
+            this.targetFolderId = config.folderId;
+          }
+          console.log('✅ GoogleDriveStorageService: Initialized with OAuth2 from Neon DB StorageConfig (5TB Drive)');
+          return true;
+        }
+      } catch (err) {
+        console.warn('⚠️ GoogleDriveStorageService: Could not load StorageConfig from DB:', err);
+      }
+    }
+
+    return this.driveClient !== null;
+  }
+
+  private async ensureTargetFolder(): Promise<string | undefined> {
+    if (!this.driveClient) return undefined;
+
+    // If targetFolderId is already set, verify it works
+    if (this.targetFolderId) {
+      try {
+        await this.driveClient.files.get({
+          fileId: this.targetFolderId,
+          fields: 'id, name',
+          supportsAllDrives: true,
+        });
+        return this.targetFolderId;
+      } catch {
+        console.warn(`⚠️ Target folder ID ${this.targetFolderId} not found, searching/creating "Receipt_Bills"...`);
+      }
+    }
+
+    // Search for existing Receipt_Bills folder
+    try {
+      const searchRes = await this.driveClient.files.list({
+        q: "name = 'Receipt_Bills' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+        fields: 'files(id, name)',
+      });
+
+      if (searchRes.data.files && searchRes.data.files.length > 0) {
+        this.targetFolderId = searchRes.data.files[0].id;
+        return this.targetFolderId;
+      }
+
+      // Create new folder
+      const createRes = await this.driveClient.files.create({
+        requestBody: {
+          name: 'Receipt_Bills',
+          mimeType: 'application/vnd.google-apps.folder',
+        },
+        fields: 'id, name',
+      });
+
+      this.targetFolderId = createRes.data.id;
+      console.log('✅ Auto-created "Receipt_Bills" folder in Drive:', this.targetFolderId);
+
+      // Save back to DB if possible
+      if (this.prisma && this.targetFolderId) {
+        await (this.prisma as any).storageConfig.update({
+          where: { id: 'google_drive' },
+          data: { folderId: this.targetFolderId },
+        }).catch(() => {});
+      }
+
+      return this.targetFolderId;
+    } catch (err) {
+      console.error('Failed to ensure target folder in Drive:', err);
+      return undefined;
     }
   }
 
@@ -59,8 +149,11 @@ export class GoogleDriveStorageService implements IStorageService {
     buffer: Buffer,
     subfolderName?: string
   ): Promise<UploadResult> {
+    await this.ensureClient();
+
     if (!this.isConfigured()) {
       // Graceful fallback for local development without credentials
+      console.warn('⚠️ GoogleDriveStorageService not configured; returning mock result.');
       return {
         fileId: `local-mock-${Date.now()}`,
         fileName,
@@ -69,13 +162,15 @@ export class GoogleDriveStorageService implements IStorageService {
       };
     }
 
+    const folderId = await this.ensureTargetFolder();
+
     const stream = new Readable();
     stream.push(buffer);
     stream.push(null);
 
     const parents: string[] = [];
-    if (this.targetFolderId) {
-      parents.push(this.targetFolderId);
+    if (folderId) {
+      parents.push(folderId);
     }
 
     const fileMetadata: any = {

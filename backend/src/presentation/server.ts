@@ -145,7 +145,8 @@ export async function buildServer() {
     encryptionService,
     rateLimiter,
     lineGateway,
-    routeLLMQueryUseCase
+    routeLLMQueryUseCase,
+    prisma
   );
 
   const handleTelegramMessageUseCase = new HandleTelegramMessageUseCase(
@@ -158,7 +159,8 @@ export async function buildServer() {
     encryptionService,
     rateLimiter,
     telegramGateway,
-    routeLLMQueryUseCase
+    routeLLMQueryUseCase,
+    prisma
   );
 
   const manageProviderKeysUseCase = new ManageProviderKeysUseCase(
@@ -199,7 +201,7 @@ export async function buildServer() {
   const { ArchiveMonthlyLogsUseCase } = await import('../application/use-cases/archive-monthly-logs.use-case.js');
   const { registerArchiveController } = await import('./controllers/archive.controller.js');
 
-  const storageService = new GoogleDriveStorageService();
+  const storageService = new GoogleDriveStorageService(prisma);
   const visionScanner = new GeminiVisionReceiptScanner();
   const processReceiptImageUseCase = new ProcessReceiptImageUseCase(
     prisma,
@@ -208,7 +210,8 @@ export async function buildServer() {
     encryptionService,
     lineGateway,
     storageService,
-    visionScanner
+    visionScanner,
+    conversationHistoryRepo
   );
 
   const archiveMonthlyLogsUseCase = new ArchiveMonthlyLogsUseCase(prisma, storageService);

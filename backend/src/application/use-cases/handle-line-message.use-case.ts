@@ -1,3 +1,4 @@
+import { PrismaClient } from '@prisma/client';
 import { ChannelNotConfiguredError, RateLimitExceededError } from '../../domain/errors/domain.error.js';
 import { IAvailableModelRepository } from '../../domain/repositories/i-available-model.repository.js';
 import { IBotChannelRepository } from '../../domain/repositories/i-bot-channel.repository.js';
@@ -27,7 +28,8 @@ export class HandleLineMessageUseCase {
     private readonly encryptionService: IEncryptionService,
     private readonly rateLimiter: IRateLimiter,
     private readonly lineGateway: ILineMessagingGateway,
-    private readonly routeLLMQueryUseCase: RouteLLMQueryUseCase
+    private readonly routeLLMQueryUseCase: RouteLLMQueryUseCase,
+    private readonly prisma?: PrismaClient
   ) {}
 
   async execute(input: HandleLineMessageInput): Promise<void> {
@@ -69,6 +71,27 @@ export class HandleLineMessageUseCase {
     // Append current user message to conversation history
     await this.conversationHistoryRepo.appendMessage('line', userId, 'user', trimmedMessage);
 
+    // Fetch today's / recent receipt bills for spending context
+    let receiptsContext = '';
+    if (this.prisma) {
+      try {
+        const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+        const bills: any[] = await (this.prisma as any).receiptBill.findMany({
+          where: { platform: 'line', userId, createdAt: { gte: startOfMonth } },
+          orderBy: { createdAt: 'desc' },
+          take: 10,
+        });
+        if (bills.length > 0) {
+          const totalMonth = bills.reduce((sum: number, b: any) => sum + b.totalAmount, 0);
+          receiptsContext = `\n\n[ข้อมูลบิลใบเสร็จที่บันทึกไว้ในระบบ Google Drive / Database ประจำเดือนนี้: ทั้งหมด ${bills.length} รายการ รวม ${totalMonth} บาท:\n` +
+            bills.map((b: any) => `- วันที่ ${b.billDate ? new Date(b.billDate).toISOString().split('T')[0] : 'วันนี้'}: ${b.merchantName} ยอด ${b.totalAmount} ${b.currency} (หมวด ${b.category || 'ทั่วไป'}) [ดูรูปใน Drive: ${b.googleDriveViewUrl || 'มี'}]`).join('\n') +
+            `\nคำสั่งสำคัญ: เมื่อเจ้านายถามยอดใช้จ่าย สรุปค่าใช้จ่าย หรือขอดูบิลใบเสร็จ ให้ตอบโดยนำข้อมูลบิลเหล่านี้มารวมและอ้างอิงตอบเจ้านายได้อย่างถูกต้องเสมอ!]`;
+        }
+      } catch (e) {
+        console.warn('Could not fetch receipts for prompt context:', e);
+      }
+    }
+
     try {
       const completion = await this.routeLLMQueryUseCase.execute({
         platform: 'line',
@@ -77,7 +100,7 @@ export class HandleLineMessageUseCase {
           ...history,
           { role: 'user', content: trimmedMessage }
         ],
-        systemPrompt: systemPromptContent,
+        systemPrompt: (systemPromptContent || '') + receiptsContext,
       });
 
       // Append assistant answer to conversation history
