@@ -79,12 +79,21 @@ const CHINESE_PRESETS: ProviderPreset[] = [
     docUrl: 'https://siliconflow.cn',
   },
   {
-    name: 'Zhipu AI / GLM (智谱清言)',
+    name: 'Z.AI / GLM (International)',
+    providerName: 'openai_compatible',
+    displayName: 'Z.AI (GLM)',
+    baseUrl: 'https://api.z.ai/api/paas/v4/',
+    defaultModelId: 'glm-5.3-flash',
+    defaultModelName: 'GLM-5.3 Flash',
+    docUrl: 'https://docs.z.ai',
+  },
+  {
+    name: 'Zhipu AI / GLM (China - 智谱清言)',
     providerName: 'openai_compatible',
     displayName: 'Zhipu AI (GLM)',
     baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
-    defaultModelId: 'glm-4-plus',
-    defaultModelName: 'GLM-4 Plus',
+    defaultModelId: 'glm-5.3-flash',
+    defaultModelName: 'GLM-5.3 Flash',
     docUrl: 'https://open.bigmodel.cn',
   },
   {
@@ -945,6 +954,12 @@ export const KeyManagementPage: React.FC = () => {
                           🟢 {msg.metrics.modelId}
                         </span>
                       )}
+                    </div>
+                  )}
+                  {msg.metrics?.wasFailover && msg.metrics.failoverReason && (
+                    <div className="mt-1.5 px-2.5 py-1.5 rounded-md bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-700 dark:text-amber-300">
+                      <span className="font-semibold">⚠️ เหตุผลที่เกิด Failover: </span>
+                      <span className="font-mono break-all">{msg.metrics.failoverReason}</span>
                     </div>
                   )}
                 </div>
