@@ -139,6 +139,39 @@ export class GoogleDriveStorageService implements IStorageService {
     }
   }
 
+  private async ensureMonthlySubfolder(parentFolderId: string): Promise<string> {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const folderName = `picture-${year}-${month}`;
+
+    try {
+      const searchRes = await this.driveClient.files.list({
+        q: `'${parentFolderId}' in parents and name = '${folderName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+        fields: 'files(id, name)',
+      });
+
+      if (searchRes.data.files && searchRes.data.files.length > 0) {
+        return searchRes.data.files[0].id;
+      }
+
+      const createRes = await this.driveClient.files.create({
+        requestBody: {
+          name: folderName,
+          mimeType: 'application/vnd.google-apps.folder',
+          parents: [parentFolderId],
+        },
+        fields: 'id',
+      });
+
+      console.log(`✅ Auto-created monthly subfolder "${folderName}" in Drive.`);
+      return createRes.data.id;
+    } catch (err) {
+      console.error('Failed to ensure monthly subfolder:', err);
+      return parentFolderId;
+    }
+  }
+
   isConfigured(): boolean {
     return this.driveClient !== null;
   }
@@ -162,7 +195,10 @@ export class GoogleDriveStorageService implements IStorageService {
       };
     }
 
-    const folderId = await this.ensureTargetFolder();
+    let folderId = await this.ensureTargetFolder();
+    if (folderId) {
+      folderId = await this.ensureMonthlySubfolder(folderId);
+    }
 
     const stream = new Readable();
     stream.push(buffer);
