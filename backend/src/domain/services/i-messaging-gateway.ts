@@ -1,5 +1,6 @@
 export interface ILineMessagingGateway {
   replyMessage(replyToken: string, text: string, channelAccessToken: string): Promise<void>;
+  replyFlexMessage(replyToken: string, altText: string, flexContainer: any, channelAccessToken: string): Promise<void>;
   pushMessage(toUserId: string, text: string, channelAccessToken: string): Promise<void>;
   getMessageContent(messageId: string, channelAccessToken: string): Promise<Buffer>;
   verifySignature(rawBody: string, signature: string, channelSecret: string): boolean;

@@ -66,6 +66,38 @@ export class LineMessagingGateway implements ILineMessagingGateway {
     }
   }
 
+  async replyFlexMessage(
+    replyToken: string,
+    altText: string,
+    flexContainer: any,
+    channelAccessToken: string
+  ): Promise<void> {
+    const messages = [
+      {
+        type: 'flex',
+        altText: altText || 'สรุปข้อมูลค่าใช้จ่าย',
+        contents: flexContainer,
+      },
+    ];
+
+    const response = await fetch('https://api.line.me/v2/bot/message/reply', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${channelAccessToken}`,
+      },
+      body: JSON.stringify({
+        replyToken,
+        messages,
+      }),
+    });
+
+    if (!response.ok) {
+      const errBody = await response.text();
+      throw new Error(`LINE replyFlexMessage failed (${response.status}): ${errBody}`);
+    }
+  }
+
   async pushMessage(toUserId: string, text: string, channelAccessToken: string): Promise<void> {
     const textChunks = this.splitMessage(text);
     const messages = textChunks.map((chunk) => ({

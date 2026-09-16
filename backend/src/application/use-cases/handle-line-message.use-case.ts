@@ -55,8 +55,14 @@ export class HandleLineMessageUseCase {
       throw new RateLimitExceededError(rateResult.resetSeconds);
     }
 
-    // 3. Process commands
-    if (trimmedMessage.startsWith('/')) {
+    // 3. Process commands & Rich Menu triggers
+    if (
+      trimmedMessage.startsWith('/') ||
+      trimmedMessage === 'สรุปค่าใช้จ่ายเดือนนี้' ||
+      trimmedMessage === 'สรุปค่าใช้จ่าย' ||
+      trimmedMessage === 'สรุปยอดบิล' ||
+      trimmedMessage === 'วิธีส่งบิลใบเสร็จ'
+    ) {
       await this.handleCommand(trimmedMessage, userId, replyToken, channelAccessToken);
       return;
     }
@@ -130,14 +136,34 @@ export class HandleLineMessageUseCase {
 
     if (command === '/help') {
       const helpText = [
-        '📌 คำสั่งที่สามารถใช้งานได้:',
-        '• /models - ดูรายชื่อโมเดล AI ทั้งหมดที่เปิดใช้งาน',
+        '📌 คำสั่งและเมนูที่สามารถใช้งานได้:',
+        '• 📊 สรุปค่าใช้จ่าย หรือ /summary - ดูการ์ดสรุปยอดเงินประจำเดือน',
+        '• 🧾 วิธีส่งบิลใบเสร็จ หรือ /guide - แนะนำวิธีส่งรูปบิลให้ AI อ่าน',
+        '• 🤖 /models - ดูรายชื่อโมเดล AI ทั้งหมดที่เปิดใช้งาน',
         '• /model <ชื่อโมเดล> - สลับโมเดล AI ที่ต้องการใช้',
         '• /model reset - กลับไปใช้โมเดลเริ่มต้นของระบบ',
-        '• /clear หรือ /reset - ล้างบริบทประวัติบทสนทนา',
+        '• 🧹 /clear หรือ /reset - ล้างบริบทประวัติบทสนทนา',
         '• /help - แสดงคำสั่งช่วยเหลือนี้'
       ].join('\n');
       await this.lineGateway.replyMessage(replyToken, helpText, channelAccessToken);
+      return;
+    }
+
+    if (
+      command === '/summary' ||
+      command === 'สรุปค่าใช้จ่ายเดือนนี้' ||
+      command === 'สรุปค่าใช้จ่าย' ||
+      command === 'สรุปยอดบิล' ||
+      commandText === 'สรุปค่าใช้จ่ายเดือนนี้' ||
+      commandText === 'สรุปค่าใช้จ่าย' ||
+      commandText === 'สรุปยอดบิล'
+    ) {
+      await this.handleMonthlySummary(userId, replyToken, channelAccessToken);
+      return;
+    }
+
+    if (command === '/guide' || command === 'วิธีส่งบิลใบเสร็จ' || commandText === 'วิธีส่งบิลใบเสร็จ') {
+      await this.handleReceiptGuide(replyToken, channelAccessToken);
       return;
     }
 
@@ -216,5 +242,332 @@ export class HandleLineMessageUseCase {
       '❓ ไม่รู้จักคำสั่งนี้ พิมพ์ /help เพื่อดูคำสั่งทั้งหมด',
       channelAccessToken
     );
+  }
+
+  private async handleMonthlySummary(
+    userId: string,
+    replyToken: string,
+    channelAccessToken: string
+  ): Promise<void> {
+    if (!this.prisma) {
+      await this.lineGateway.replyMessage(replyToken, 'ระบบฐานข้อมูลไม่พร้อมใช้งาน', channelAccessToken);
+      return;
+    }
+
+    try {
+      const now = new Date();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const thaiMonths = [
+        'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+        'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'
+      ];
+      const monthYearText = `${thaiMonths[now.getMonth()]} ${now.getFullYear() + 543}`;
+
+      const bills: any[] = await (this.prisma as any).receiptBill.findMany({
+        where: {
+          platform: 'line',
+          userId,
+          createdAt: { gte: startOfMonth },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      // Fetch Google Drive folder URL
+      let driveUrl = 'https://drive.google.com';
+      try {
+        const storageConfig = await (this.prisma as any).storageConfig.findUnique({
+          where: { id: 'google_drive' },
+        });
+        if (storageConfig?.folderId) {
+          driveUrl = `https://drive.google.com/drive/folders/${storageConfig.folderId}`;
+        }
+      } catch (e) {
+        driveUrl = 'https://drive.google.com/drive/folders/1W_cu4ozE6wWUxdH3IOJ4SE4HXo5S2QHN';
+      }
+
+      if (bills.length === 0) {
+        const emptyBubble = {
+          type: 'bubble',
+          size: 'mega',
+          header: {
+            type: 'box',
+            layout: 'vertical',
+            paddingAll: '20px',
+            backgroundColor: '#F8FAFC',
+            contents: [
+              {
+                type: 'text',
+                text: '📊 สรุปยอดค่าใช้จ่าย',
+                weight: 'bold',
+                size: 'md',
+                color: '#0F172A',
+              },
+              {
+                type: 'text',
+                text: monthYearText,
+                size: 'xs',
+                color: '#64748B',
+                margin: 'xs',
+              },
+            ],
+          },
+          body: {
+            type: 'box',
+            layout: 'vertical',
+            paddingAll: '20px',
+            contents: [
+              {
+                type: 'text',
+                text: 'ยังไม่มีการบันทึกบิลในเดือนนี้',
+                weight: 'bold',
+                size: 'sm',
+                color: '#334155',
+              },
+              {
+                type: 'text',
+                text: 'ถ่ายรูปหรือเลือกรูปใบเสร็จส่งเข้ามาในแชทนี้ได้เลยครับ ระบบ AI จะสแกนและบันทึกภาพลง Google Drive ให้โดยอัตโนมัติ',
+                size: 'xs',
+                color: '#64748B',
+                wrap: true,
+                margin: 'md',
+              },
+            ],
+          },
+          footer: {
+            type: 'box',
+            layout: 'vertical',
+            paddingAll: '16px',
+            contents: [
+              {
+                type: 'button',
+                style: 'primary',
+                color: '#0D9488',
+                action: {
+                  type: 'uri',
+                  label: '📂 เปิดดูโฟลเดอร์ Google Drive',
+                  uri: driveUrl,
+                },
+              },
+            ],
+          },
+        };
+
+        await this.lineGateway.replyFlexMessage(
+          replyToken,
+          `📊 สรุปยอดเดือน ${monthYearText}: ยังไม่มีรายการบันทึก`,
+          emptyBubble,
+          channelAccessToken
+        );
+        return;
+      }
+
+      const totalAmount = bills.reduce((sum: number, b: any) => sum + (b.totalAmount || 0), 0);
+      const totalAmountFormatted = new Intl.NumberFormat('th-TH', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(totalAmount);
+
+      // Group by category
+      const categoryMap = new Map<string, number>();
+      for (const bill of bills) {
+        const cat = bill.category || 'ทั่วไป';
+        categoryMap.set(cat, (categoryMap.get(cat) || 0) + (bill.totalAmount || 0));
+      }
+
+      const categoryRows: any[] = [];
+      categoryMap.forEach((catTotal, catName) => {
+        categoryRows.push({
+          type: 'box',
+          layout: 'horizontal',
+          margin: 'sm',
+          contents: [
+            {
+              type: 'text',
+              text: `• ${catName}`,
+              size: 'xs',
+              color: '#475569',
+              flex: 1,
+            },
+            {
+              type: 'text',
+              text: `฿${catTotal.toLocaleString('th-TH', { minimumFractionDigits: 2 })}`,
+              size: 'xs',
+              color: '#0F172A',
+              weight: 'bold',
+              align: 'end',
+            },
+          ],
+        });
+      });
+
+      // Top 3 latest bills
+      const recentRows: any[] = [];
+      bills.slice(0, 3).forEach((b: any) => {
+        const dateStr = b.billDate
+          ? new Date(b.billDate).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })
+          : new Date(b.createdAt).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
+
+        recentRows.push({
+          type: 'box',
+          layout: 'horizontal',
+          margin: 'sm',
+          contents: [
+            {
+              type: 'text',
+              text: `${b.merchantName || 'ร้านค้าทั่วไป'} (${dateStr})`,
+              size: 'xxs',
+              color: '#64748B',
+              flex: 1,
+              maxLines: 1,
+            },
+            {
+              type: 'text',
+              text: `฿${(b.totalAmount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`,
+              size: 'xxs',
+              color: '#0F172A',
+              align: 'end',
+            },
+          ],
+        });
+      });
+
+      const summaryBubble = {
+        type: 'bubble',
+        size: 'mega',
+        header: {
+          type: 'box',
+          layout: 'vertical',
+          paddingAll: '20px',
+          backgroundColor: '#F8FAFC',
+          contents: [
+            {
+              type: 'box',
+              layout: 'horizontal',
+              contents: [
+                {
+                  type: 'text',
+                  text: '📊 สรุปยอดค่าใช้จ่าย',
+                  weight: 'bold',
+                  size: 'md',
+                  color: '#0F172A',
+                  flex: 1,
+                },
+                {
+                  type: 'text',
+                  text: monthYearText,
+                  size: 'xs',
+                  color: '#64748B',
+                  align: 'end',
+                },
+              ],
+            },
+            {
+              type: 'box',
+              layout: 'vertical',
+              margin: 'lg',
+              contents: [
+                {
+                  type: 'text',
+                  text: 'ยอดรวมประจำเดือน',
+                  size: 'xs',
+                  color: '#64748B',
+                },
+                {
+                  type: 'text',
+                  text: `฿${totalAmountFormatted}`,
+                  size: 'xxl',
+                  weight: 'bold',
+                  color: '#0D9488',
+                  margin: 'xs',
+                },
+                {
+                  type: 'text',
+                  text: `บันทึกแล้วทั้งหมด ${bills.length} รายการ (Google Drive Synced)`,
+                  size: 'xxs',
+                  color: '#94A3B8',
+                  margin: 'xs',
+                },
+              ],
+            },
+          ],
+        },
+        body: {
+          type: 'box',
+          layout: 'vertical',
+          paddingAll: '20px',
+          contents: [
+            {
+              type: 'text',
+              text: 'หมวดหมู่ค่าใช้จ่าย',
+              size: 'xs',
+              weight: 'bold',
+              color: '#334155',
+            },
+            ...categoryRows,
+            {
+              type: 'separator',
+              margin: 'lg',
+            },
+            {
+              type: 'text',
+              text: 'รายการล่าสุด',
+              size: 'xs',
+              weight: 'bold',
+              color: '#334155',
+              margin: 'lg',
+            },
+            ...recentRows,
+          ],
+        },
+        footer: {
+          type: 'box',
+          layout: 'vertical',
+          paddingAll: '16px',
+          contents: [
+            {
+              type: 'button',
+              style: 'primary',
+              color: '#0D9488',
+              action: {
+                type: 'uri',
+                label: '📂 ดูรูปใบเสร็จทั้งหมดใน Google Drive',
+                uri: driveUrl,
+              },
+            },
+          ],
+        },
+      };
+
+      await this.lineGateway.replyFlexMessage(
+        replyToken,
+        `📊 สรุปยอดค่าใช้จ่าย ${monthYearText}: รวม ฿${totalAmountFormatted}`,
+        summaryBubble,
+        channelAccessToken
+      );
+    } catch (error: any) {
+      console.error('Error generating monthly summary flex message:', error);
+      await this.lineGateway.replyMessage(
+        replyToken,
+        '⚠️ ขออภัย เกิดข้อผิดพลาดในการดึงข้อมูลสรุปค่าใช้จ่าย กรุณาลองใหม่อีกครั้ง',
+        channelAccessToken
+      );
+    }
+  }
+
+  private async handleReceiptGuide(replyToken: string, channelAccessToken: string): Promise<void> {
+    const guideText = [
+      '🧾 ขั้นตอนการส่งบิล/ใบเสร็จให้ระบบบันทึก:',
+      '',
+      '1. 📸 ถ่ายรูปหรือเลือกรูปใบเสร็จส่งเข้ามาในแชทนี้ได้ทันที',
+      '2. 🤖 AI Vision จะสแกนข้อมูลอัตโนมัติ:',
+      '   • ชื่อร้านค้า (Merchant)',
+      '   • ยอดเงินรวมสุทธิ (Total Amount)',
+      '   • หมวดหมู่ค่าใช้จ่าย (Category)',
+      '   • วันที่ตามใบเสร็จ (Bill Date)',
+      '3. ☁️ บันทึกไฟล์ภาพต้นฉบับลง Google Drive (โฟลเดอร์ Receipt_Bills) พร้อมลงฐานข้อมูล Neon DB ทันที',
+      '4. 📊 สามารถกดปุ่ม "สรุปค่าใช้จ่าย" หรือพิมพ์ถามเลขา AI เพื่อดูรายงานได้ตลอดเวลาครับ!'
+    ].join('\n');
+
+    await this.lineGateway.replyMessage(replyToken, guideText, channelAccessToken);
   }
 }
