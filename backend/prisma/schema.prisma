@@ -42,11 +42,14 @@ model AvailableModel {
   modelId     String      // e.g. "gpt-4o", "gemini-2.0-flash", "claude-3-5-sonnet"
   displayName String      // e.g. "GPT-4o", "Gemini 2.0 Flash"
   isDefault   Boolean     @default(false)
+  isActive    Boolean     @default(true)
+  priorityOrder Int       @default(0)
   maxTokens   Int?
   createdAt   DateTime    @default(now())
 
   @@unique([providerId, modelId])
   @@index([modelId])
+  @@index([isActive, priorityOrder])
 }
 
 // ─── 3. Bot Channel Credentials (LINE & Telegram managed via Web UI) ───

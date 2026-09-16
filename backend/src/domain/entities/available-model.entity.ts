@@ -4,6 +4,8 @@ export interface AvailableModel {
   modelId: string;
   displayName: string;
   isDefault: boolean;
+  isActive: boolean;
+  priorityOrder: number;
   maxTokens?: number | null;
   createdAt: Date;
 }

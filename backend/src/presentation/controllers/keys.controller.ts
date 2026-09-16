@@ -28,14 +28,58 @@ const addModelSchema = z.object({
   isDefault: z.boolean().optional(),
 });
 
+import { IAvailableModelRepository } from '../../domain/repositories/i-available-model.repository.js';
+
 export function registerKeysRoutes(
   app: FastifyInstance,
   manageProviderKeysUseCase: ManageProviderKeysUseCase,
-  routeLLMQueryUseCase?: RouteLLMQueryUseCase
+  routeLLMQueryUseCase?: RouteLLMQueryUseCase,
+  availableModelRepo?: IAvailableModelRepository
 ) {
   // All endpoints here require Admin JWT authentication
   app.register(async (protectedRoutes) => {
     protectedRoutes.addHook('preHandler', app.authenticate);
+
+    // Get all models in global priority cascade order
+    protectedRoutes.get('/api/models/priority', async (request: FastifyRequest, reply: FastifyReply) => {
+      if (!availableModelRepo) {
+        return reply.status(503).send({ error: 'Available model repository not provided' });
+      }
+      const models = await availableModelRepo.findAllOrdered();
+      const cooldowns = RouteLLMQueryUseCase.getCooldowns();
+
+      const enriched = models.map((m) => ({
+        ...m,
+        cooldownSecondsRemaining: cooldowns[m.modelId] || 0,
+        isCoolingDown: !!cooldowns[m.modelId],
+      }));
+
+      return reply.send(enriched);
+    });
+
+    // Reorder models (Global Priority Cascade: 1, 2, 3...)
+    protectedRoutes.put('/api/models/reorder', async (request: FastifyRequest, reply: FastifyReply) => {
+      if (!availableModelRepo) {
+        return reply.status(503).send({ error: 'Available model repository not provided' });
+      }
+      const body = request.body as { orderedIds: string[] };
+      if (!body.orderedIds || !Array.isArray(body.orderedIds)) {
+        return reply.status(400).send({ error: 'orderedIds array is required' });
+      }
+      await availableModelRepo.reorderModels(body.orderedIds);
+      return reply.send({ success: true, message: 'Models priority reordered successfully.' });
+    });
+
+    // Toggle active state of a model
+    protectedRoutes.patch('/api/models/:id/toggle', async (request: FastifyRequest, reply: FastifyReply) => {
+      if (!availableModelRepo) {
+        return reply.status(503).send({ error: 'Available model repository not provided' });
+      }
+      const { id } = request.params as { id: string };
+      const body = request.body as { isActive: boolean };
+      const updated = await availableModelRepo.toggleActive(id, !!body.isActive);
+      return reply.send({ success: true, model: updated });
+    });
 
     // List all provider keys & models
     protectedRoutes.get('/api/keys', async (request: FastifyRequest, reply: FastifyReply) => {

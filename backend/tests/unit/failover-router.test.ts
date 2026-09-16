@@ -50,12 +50,48 @@ describe('RouteLLMQueryUseCase Failover Logic', () => {
           priorityOrder: 2,
         },
       ]),
+      findById: vi.fn((id) => {
+        if (id === 'key-1') {
+          return Promise.resolve({
+            id: 'key-1',
+            providerName: 'gemini',
+            displayName: 'Google Gemini (Primary)',
+            apiKeyEncrypted: 'enc:primary',
+            isActive: true,
+          });
+        }
+        return Promise.resolve({
+          id: 'key-2',
+          providerName: 'openai',
+          displayName: 'OpenAI (Backup)',
+          apiKeyEncrypted: 'enc:backup',
+          isActive: true,
+        });
+      }),
     };
 
     const mockAvailableModelRepo: any = {
       findByModelId: vi.fn().mockResolvedValue(null),
       findByProviderId: vi.fn().mockResolvedValue([
         { modelId: 'gpt-4o-mini', isDefault: true },
+      ]),
+      findAllActiveOrdered: vi.fn().mockResolvedValue([
+        {
+          id: 'model-1',
+          providerId: 'key-1',
+          modelId: 'gemini-3.1-flash-lite',
+          displayName: 'Gemini 3.1 Flash Lite',
+          priorityOrder: 1,
+          isActive: true,
+        },
+        {
+          id: 'model-2',
+          providerId: 'key-2',
+          modelId: 'gpt-4o-mini',
+          displayName: 'GPT-4o Mini',
+          priorityOrder: 2,
+          isActive: true,
+        },
       ]),
     };
 

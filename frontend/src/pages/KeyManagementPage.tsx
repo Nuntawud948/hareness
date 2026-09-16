@@ -16,6 +16,10 @@ import {
   Zap,
   Bot,
   User,
+  ChevronUp,
+  ChevronDown,
+  Clock,
+  Layers,
 } from 'lucide-react';
 import { apiClient } from '../services/api.client';
 import { Input, Button, Card, Badge, Modal, CustomDropdown } from '../components/ui';
@@ -26,6 +30,22 @@ interface AvailableModel {
   displayName: string;
   isDefault: boolean;
   maxTokens?: number | null;
+}
+
+export interface GlobalPriorityModel {
+  id: string;
+  providerId: string;
+  modelId: string;
+  displayName: string;
+  isDefault: boolean;
+  isActive: boolean;
+  priorityOrder: number;
+  maxTokens?: number | null;
+  providerName: string;
+  providerDisplayName: string;
+  providerIsActive: boolean;
+  cooldownSecondsRemaining: number;
+  isCoolingDown: boolean;
 }
 
 interface ProviderKeyItem {
@@ -169,6 +189,65 @@ export const KeyManagementPage: React.FC = () => {
     }>
   >([]);
 
+  // Global Model Priority Cascade state
+  const [priorityModels, setPriorityModels] = useState<GlobalPriorityModel[]>([]);
+  const [loadingPriority, setLoadingPriority] = useState(false);
+  const [reordering, setReordering] = useState(false);
+
+  const fetchPriorityModels = async () => {
+    try {
+      setLoadingPriority(true);
+      const res = await apiClient.get<GlobalPriorityModel[]>('/api/models/priority');
+      setPriorityModels(res.data);
+    } catch (err) {
+      console.error('Failed to fetch model priorities:', err);
+    } finally {
+      setLoadingPriority(false);
+    }
+  };
+
+  const handleMovePriority = async (index: number, direction: 'up' | 'down') => {
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= priorityModels.length || reordering) return;
+
+    const newModels = [...priorityModels];
+    const temp = newModels[index];
+    newModels[index] = newModels[targetIndex];
+    newModels[targetIndex] = temp;
+
+    // Optimistically update
+    setPriorityModels(newModels);
+
+    try {
+      setReordering(true);
+      const orderedIds = newModels.map((m) => m.id);
+      await apiClient.put('/api/models/reorder', { orderedIds });
+      await fetchPriorityModels();
+      await fetchKeys();
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Failed to reorder models');
+      await fetchPriorityModels();
+    } finally {
+      setReordering(false);
+    }
+  };
+
+  const handleToggleModelActive = async (model: GlobalPriorityModel) => {
+    const newActive = !model.isActive;
+    setPriorityModels((prev) =>
+      prev.map((m) => (m.id === model.id ? { ...m, isActive: newActive } : m))
+    );
+
+    try {
+      await apiClient.patch(`/api/models/${model.id}/toggle`, { isActive: newActive });
+      await fetchPriorityModels();
+      await fetchKeys();
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Failed to update model status');
+      await fetchPriorityModels();
+    }
+  };
+
   const handleOpenChatPlayground = (preselectedModelId?: string) => {
     if (preselectedModelId) {
       setTestChatModelId(preselectedModelId);
@@ -236,10 +315,13 @@ export const KeyManagementPage: React.FC = () => {
   const fetchKeys = async () => {
     try {
       setLoading(true);
-      const res = await apiClient.get<ProviderKeyItem[]>('/api/keys');
-      setProviders(res.data);
-      if (res.data.length > 0 && !selectedProviderForModel) {
-        setSelectedProviderForModel(res.data[0].id);
+      const [keysRes] = await Promise.all([
+        apiClient.get<ProviderKeyItem[]>('/api/keys'),
+        fetchPriorityModels(),
+      ]);
+      setProviders(keysRes.data);
+      if (keysRes.data.length > 0 && !selectedProviderForModel) {
+        setSelectedProviderForModel(keysRes.data[0].id);
       }
     } catch (err) {
       console.error('Failed to fetch keys:', err);
@@ -477,6 +559,179 @@ export const KeyManagementPage: React.FC = () => {
           </Button>
         </div>
       </div>
+
+      {/* ────────────────── Global Model Priority Cascade Card ────────────────── */}
+      <Card className="border-teal-500/30 dark:border-teal-500/20 bg-gradient-to-br from-white via-white to-teal-50/20 dark:from-slate-900 dark:via-slate-900 dark:to-teal-950/20 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100 dark:border-slate-800">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="p-1.5 rounded-lg bg-teal-500/10 text-teal-600 dark:text-teal-400">
+                <Layers className="w-5 h-5" />
+              </span>
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                ลำดับความสำคัญของโมเดล AI (Global Model Priority Cascade)
+              </h3>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              ระบบจะเรียกใช้โมเดลตามลำดับ <strong>#1 ➔ #2 ➔ #3...</strong> หากโมเดลติดโควตา (429 Rate Limit) จะสลับไปตัวถัดไปให้อัตโนมัติทันที พร้อมคูลดาวน์ 60 วิ
+            </p>
+          </div>
+          <div className="flex items-center space-x-2">
+            <Badge variant="neutral">
+              {priorityModels.filter((m) => m.isActive).length} / {priorityModels.length} ใช้งานอยู่
+            </Badge>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={fetchPriorityModels}
+              isLoading={loadingPriority}
+              leftIcon={<RefreshCw className="w-3 h-3" />}
+            >
+              รีเฟรชสถานะ
+            </Button>
+          </div>
+        </div>
+
+        {loadingPriority && priorityModels.length === 0 ? (
+          <div className="py-8 text-center text-xs text-slate-400">กำลังโหลดลำดับความสำคัญของโมเดล...</div>
+        ) : priorityModels.length === 0 ? (
+          <div className="py-8 text-center text-xs text-slate-400">ยังไม่มีโมเดลในระบบ กรุณาเพิ่มโมเดลด้านล่าง</div>
+        ) : (
+          <div className="divide-y divide-slate-100 dark:divide-slate-800/60 mt-2">
+            {priorityModels.map((model, index) => {
+              const isFirst = index === 0;
+              const isLast = index === priorityModels.length - 1;
+              const isLiteModel = model.modelId.includes('lite');
+              const isFlash36 = model.modelId.includes('3.6');
+
+              return (
+                <div
+                  key={model.id}
+                  className={`py-3 px-2 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors ${
+                    !model.isActive
+                      ? 'opacity-50 bg-slate-50/50 dark:bg-slate-950/30'
+                      : model.isCoolingDown
+                      ? 'bg-amber-500/5 border border-amber-500/20'
+                      : index === 0
+                      ? 'bg-teal-500/5 border border-teal-500/15'
+                      : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
+                  }`}
+                >
+                  {/* Left: Rank & Move Buttons & Model Info */}
+                  <div className="flex items-center space-x-3">
+                    {/* Rank Badge */}
+                    <div
+                      className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 border ${
+                        index === 0
+                          ? 'bg-teal-600 text-white border-teal-600 shadow-sm shadow-teal-500/20'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                      }`}
+                    >
+                      #{index + 1}
+                    </div>
+
+                    {/* Up / Down Controls */}
+                    <div className="flex flex-col space-y-0.5">
+                      <button
+                        type="button"
+                        onClick={() => handleMovePriority(index, 'up')}
+                        disabled={isFirst || reordering}
+                        title="เลื่อนลำดับขึ้น (ให้ความสำคัญก่อน)"
+                        className="p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 disabled:opacity-20 disabled:hover:bg-transparent transition cursor-pointer disabled:cursor-not-allowed"
+                      >
+                        <ChevronUp className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleMovePriority(index, 'down')}
+                        disabled={isLast || reordering}
+                        title="เลื่อนลำดับลง (เป็นตัวสำรองถัดไป)"
+                        className="p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 disabled:opacity-20 disabled:hover:bg-transparent transition cursor-pointer disabled:cursor-not-allowed"
+                      >
+                        <ChevronDown className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    {/* Model Details */}
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-semibold text-slate-900 dark:text-white">
+                          {model.displayName}
+                        </span>
+                        <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700">
+                          {model.modelId}
+                        </span>
+                        <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-200/70 dark:bg-slate-700 text-slate-700 dark:text-slate-200">
+                          {model.providerDisplayName}
+                        </span>
+                        {index === 0 && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-500/20 text-teal-700 dark:text-teal-300 border border-teal-500/30">
+                            ★ ลำดับหลัก (Primary)
+                          </span>
+                        )}
+                        {isLiteModel && (
+                          <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                            โควตา 500 RPD
+                          </span>
+                        )}
+                        {isFlash36 && (
+                          <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                            โควตาจำกัด 20 RPD
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Cooldown Warning if triggered */}
+                      {model.isCoolingDown && (
+                        <div className="flex items-center gap-1.5 text-[11px] text-amber-600 dark:text-amber-400 font-medium mt-1">
+                          <Clock className="w-3 h-3 animate-spin" />
+                          <span>ติด Rate Limit ชั่วคราว — พักคูลดาวน์ {model.cooldownSecondsRemaining} วินาที (ระบบข้ามไปเรียกตัวสำรองอัตโนมัติ)</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Right: Active Toggle & Chat Shortcut */}
+                  <div className="flex items-center space-x-2 shrink-0 self-end sm:self-auto pl-12 sm:pl-0">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleModelActive(model)}
+                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition ${
+                        model.isActive
+                          ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700'
+                      }`}
+                      title={model.isActive ? 'คลิกเพื่อปิดใช้งาน' : 'คลิกเพื่อเปิดใช้งาน'}
+                    >
+                      {model.isActive ? (
+                        <>
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                          <span>พร้อมใช้งาน</span>
+                        </>
+                      ) : (
+                        <>
+                          <XCircle className="w-3.5 h-3.5 text-slate-400" />
+                          <span>ปิดใช้งาน</span>
+                        </>
+                      )}
+                    </button>
+
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleOpenChatPlayground(model.modelId)}
+                      leftIcon={<MessageSquare className="w-3 h-3" />}
+                      className="text-xs"
+                    >
+                      ทดสอบ
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
 
       {loading ? (
         <div className="p-12 text-center text-slate-400">Loading configured providers...</div>
