@@ -98,38 +98,57 @@ export class RouteLLMQueryUseCase {
         continue;
       }
 
-      // Determine model to use
-      let modelIdToUse = '';
-      if (i === 0 && requestedModelId) {
-        modelIdToUse = requestedModelId;
+      // Determine model candidates for this provider
+      const providerModels = await this.availableModelRepo.findByProviderId(currentKey.id);
+      let modelCandidates: string[] = [];
+
+      if (i === 0 && requestedModelId && providerModels.some((m) => m.modelId === requestedModelId)) {
+        modelCandidates = [
+          requestedModelId,
+          ...providerModels.filter((m) => m.modelId !== requestedModelId).map((m) => m.modelId),
+        ];
       } else {
-        // Fallback: pick default model of current provider
-        const models = await this.availableModelRepo.findByProviderId(currentKey.id);
-        const defaultModel = models.find((m) => m.isDefault) || models[0];
-        modelIdToUse = defaultModel ? defaultModel.modelId : 'default';
+        const defaultModel = providerModels.find((m) => m.isDefault);
+        const others = providerModels.filter((m) => !m.isDefault).map((m) => m.modelId);
+        modelCandidates = defaultModel ? [defaultModel.modelId, ...others] : (others.length > 0 ? others : ['default']);
       }
 
-      try {
-        const result = await providerAdapter.generateResponse({
-          modelId: modelIdToUse,
-          messages: dto.messages,
-          systemPrompt: dto.systemPrompt,
-          apiKey,
-          baseUrl: currentKey.baseUrl,
-        });
+      // Try each model candidate for this provider
+      for (const modelIdToUse of modelCandidates) {
+        try {
+          const result = await providerAdapter.generateResponse({
+            modelId: modelIdToUse,
+            messages: dto.messages,
+            systemPrompt: dto.systemPrompt,
+            apiKey,
+            baseUrl: currentKey.baseUrl,
+          });
 
-        const estimatedCostUsd = this.calculateCost(
-          result.modelId,
-          result.promptTokens,
-          result.completionTokens
-        );
+          const estimatedCostUsd = this.calculateCost(
+            result.modelId,
+            result.promptTokens,
+            result.completionTokens
+          );
 
-        // Record usage asynchronously
-        this.usageLogRepo
-          .create({
-            platform: dto.platform,
-            userId: dto.userId,
-            providerName: currentKey.providerName,
+          // Record usage asynchronously
+          this.usageLogRepo
+            .create({
+              platform: dto.platform,
+              userId: dto.userId,
+              providerName: currentKey.providerName,
+              modelId: result.modelId,
+              promptTokens: result.promptTokens,
+              completionTokens: result.completionTokens,
+              totalTokens: result.totalTokens,
+              estimatedCostUsd,
+              responseTimeMs: result.responseTimeMs,
+              wasFailover,
+            })
+            .catch((err) => console.error('Failed to log usage:', err));
+
+          return {
+            content: result.content,
+            providerName: currentKey.displayName,
             modelId: result.modelId,
             promptTokens: result.promptTokens,
             completionTokens: result.completionTokens,
@@ -137,27 +156,16 @@ export class RouteLLMQueryUseCase {
             estimatedCostUsd,
             responseTimeMs: result.responseTimeMs,
             wasFailover,
-          })
-          .catch((err) => console.error('Failed to log usage:', err));
-
-        return {
-          content: result.content,
-          providerName: currentKey.displayName,
-          modelId: result.modelId,
-          promptTokens: result.promptTokens,
-          completionTokens: result.completionTokens,
-          totalTokens: result.totalTokens,
-          estimatedCostUsd,
-          responseTimeMs: result.responseTimeMs,
-          wasFailover,
-          failoverReason: wasFailover ? JSON.stringify(failureLog) : undefined,
-        };
-      } catch (err: any) {
-        console.warn(
-          `Provider '${currentKey.displayName}' failed: ${err.message}. Cascading to next provider.`
-        );
-        failureLog[currentKey.displayName] = err.message || 'Unknown error';
-        wasFailover = true;
+            failoverReason: wasFailover ? JSON.stringify(failureLog) : undefined,
+          };
+        } catch (err: any) {
+          console.warn(
+            `Model '${modelIdToUse}' on '${currentKey.displayName}' failed: ${err.message}. Cascading to next candidate.`
+          );
+          failureLog[`${currentKey.displayName} [${modelIdToUse}]`] = err.message || 'Error';
+          wasFailover = true;
+          // Try next model of same provider, or cascades to next provider
+        }
       }
     }
 

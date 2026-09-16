@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { ManageProviderKeysUseCase } from '../../application/use-cases/manage-provider-keys.use-case.js';
+import { RouteLLMQueryUseCase } from '../../application/use-cases/route-llm-query.use-case.js';
 
 const updateKeySchema = z.object({
   rawApiKey: z.string().optional(),
@@ -29,7 +30,8 @@ const addModelSchema = z.object({
 
 export function registerKeysRoutes(
   app: FastifyInstance,
-  manageProviderKeysUseCase: ManageProviderKeysUseCase
+  manageProviderKeysUseCase: ManageProviderKeysUseCase,
+  routeLLMQueryUseCase?: RouteLLMQueryUseCase
 ) {
   // All endpoints here require Admin JWT authentication
   app.register(async (protectedRoutes) => {
@@ -122,5 +124,50 @@ export function registerKeysRoutes(
         return reply.send({ success: true, message: 'Default model updated.' });
       }
     );
+
+    // Live Interactive Chat Test / Playground endpoint
+    protectedRoutes.post('/api/keys/chat-test', async (request: FastifyRequest, reply: FastifyReply) => {
+      if (!routeLLMQueryUseCase) {
+        return reply.status(503).send({ error: 'LLM router not available.' });
+      }
+
+      const body = (request.body as any) || {};
+      const userMessage = body.message ? String(body.message).trim() : '';
+
+      if (!userMessage) {
+        return reply.status(400).send({ error: 'Message cannot be empty.' });
+      }
+
+      try {
+        const result = await routeLLMQueryUseCase.execute({
+          platform: 'line',
+          userId: 'admin-playground-tester',
+          messages: [{ role: 'user', content: userMessage }],
+          systemPrompt:
+            body.systemPrompt ||
+            'คุณคือผู้ช่วย AI อัจฉริยะ ตอบคำถามอย่างกระชับ ได้ใจความ และสุภาพเป็นมิตร',
+          preferredModelOverride: body.modelId || null,
+        });
+
+        return reply.send({
+          success: true,
+          content: result.content,
+          modelId: result.modelId,
+          providerName: result.providerName,
+          responseTimeMs: result.responseTimeMs,
+          promptTokens: result.promptTokens,
+          completionTokens: result.completionTokens,
+          totalTokens: result.totalTokens,
+          estimatedCostUsd: result.estimatedCostUsd,
+          wasFailover: result.wasFailover,
+          failoverReason: result.failoverReason,
+        });
+      } catch (err: any) {
+        return reply.status(500).send({
+          success: false,
+          error: err.message || 'LLM generation failed',
+        });
+      }
+    });
   });
 }

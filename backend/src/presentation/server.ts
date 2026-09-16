@@ -227,7 +227,7 @@ export async function buildServer() {
     lineGateway,
     processReceiptImageUseCase
   );
-  registerKeysRoutes(app, manageProviderKeysUseCase);
+  registerKeysRoutes(app, manageProviderKeysUseCase, routeLLMQueryUseCase);
   registerChannelsRoutes(app, manageBotChannelsUseCase, serverBaseUrl);
   registerPromptRoutes(app, manageSystemPromptUseCase);
   registerPushRoutes(app, sendPushMessageUseCase, sseManager);

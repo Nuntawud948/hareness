@@ -11,6 +11,11 @@ import {
   Globe,
   Sparkles,
   ExternalLink,
+  MessageSquare,
+  Send,
+  Zap,
+  Bot,
+  User,
 } from 'lucide-react';
 import { apiClient } from '../services/api.client';
 import { Input, Button, Card, Badge, Modal, CustomDropdown } from '../components/ui';
@@ -130,6 +135,94 @@ export const KeyManagementPage: React.FC = () => {
   const [newModelName, setNewModelName] = useState('');
   const [newModelIsDefault, setNewModelIsDefault] = useState(false);
   const [savingModel, setSavingModel] = useState(false);
+
+  // Live Chat Playground state
+  const [isChatPlaygroundOpen, setIsChatPlaygroundOpen] = useState(false);
+  const [testChatModelId, setTestChatModelId] = useState<string>('');
+  const [testChatInput, setTestChatInput] = useState('');
+  const [isTestChatSending, setIsTestChatSending] = useState(false);
+  const [testChatMessages, setTestChatMessages] = useState<
+    Array<{
+      id: string;
+      role: 'user' | 'assistant';
+      content: string;
+      metrics?: {
+        responseTimeMs: number;
+        promptTokens: number;
+        completionTokens: number;
+        totalTokens: number;
+        estimatedCostUsd: number;
+        modelId: string;
+        providerName: string;
+        wasFailover: boolean;
+        failoverReason?: string;
+      };
+    }>
+  >([]);
+
+  const handleOpenChatPlayground = (preselectedModelId?: string) => {
+    if (preselectedModelId) {
+      setTestChatModelId(preselectedModelId);
+    } else if (!testChatModelId && providers.length > 0) {
+      // Find first default model across active providers
+      const activeP = providers.find((p) => p.isActive && p.hasApiKey);
+      const defM = activeP?.models.find((m) => m.isDefault) || activeP?.models[0];
+      if (defM) setTestChatModelId(defM.modelId);
+    }
+    setIsChatPlaygroundOpen(true);
+  };
+
+  const handleSendTestChat = async () => {
+    if (!testChatInput.trim() || isTestChatSending) return;
+    const userText = testChatInput.trim();
+    const userMsgId = `user-${Date.now()}`;
+
+    setTestChatMessages((prev) => [
+      ...prev,
+      { id: userMsgId, role: 'user', content: userText },
+    ]);
+    setTestChatInput('');
+    setIsTestChatSending(true);
+
+    try {
+      const res = await apiClient.post('/api/keys/chat-test', {
+        modelId: testChatModelId || undefined,
+        message: userText,
+      });
+      const data = res.data;
+      setTestChatMessages((prev) => [
+        ...prev,
+        {
+          id: `bot-${Date.now()}`,
+          role: 'assistant',
+          content: data.content,
+          metrics: {
+            responseTimeMs: data.responseTimeMs,
+            promptTokens: data.promptTokens,
+            completionTokens: data.completionTokens,
+            totalTokens: data.totalTokens,
+            estimatedCostUsd: data.estimatedCostUsd,
+            modelId: data.modelId,
+            providerName: data.providerName,
+            wasFailover: data.wasFailover,
+            failoverReason: data.failoverReason,
+          },
+        },
+      ]);
+    } catch (err: any) {
+      const errMsg = err.response?.data?.error || err.message || 'Failed to send message';
+      setTestChatMessages((prev) => [
+        ...prev,
+        {
+          id: `err-${Date.now()}`,
+          role: 'assistant',
+          content: `⚠️ เกิดข้อผิดพลาด: ${errMsg}`,
+        },
+      ]);
+    } finally {
+      setIsTestChatSending(false);
+    }
+  };
 
   const fetchKeys = async () => {
     try {
@@ -295,13 +388,36 @@ export const KeyManagementPage: React.FC = () => {
     badge: p.defaultModelName,
   }));
 
-  // Provider options for Add Model CustomDropdown
+  const allAvailableModelsList = providers
+    .filter((p) => p.isActive && p.hasApiKey)
+    .flatMap((p) =>
+      p.models.map((m) => ({
+        ...m,
+        providerName: p.displayName,
+      }))
+    );
+
   const providerDropdownOptions = providers.map((p) => ({
     value: p.id,
     label: p.displayName,
     sublabel: p.providerName,
     badge: `#${p.priorityOrder}`,
   }));
+
+  const playgroundModelOptions = [
+    {
+      value: '',
+      label: '⚡ Auto-Router (Default Priority & Failover Cascade)',
+      sublabel: 'เลือกลำดับอัตโนมัติ และสลับตัวสำรองให้ทันทีหากติดโควตา',
+      badge: 'Recommended',
+    },
+    ...allAvailableModelsList.map((m) => ({
+      value: m.modelId,
+      label: m.displayName,
+      sublabel: `${m.providerName} • ${m.modelId}`,
+      badge: m.isDefault ? 'Default' : undefined,
+    })),
+  ];
 
   return (
     <div className="space-y-6">
@@ -317,6 +433,15 @@ export const KeyManagementPage: React.FC = () => {
         </div>
 
         <div className="flex items-center space-x-2">
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => handleOpenChatPlayground()}
+            leftIcon={<MessageSquare className="w-3.5 h-3.5" />}
+            className="bg-teal-600 hover:bg-teal-700 text-white"
+          >
+            Chat Playground
+          </Button>
           <Button
             variant="secondary"
             size="sm"
@@ -413,6 +538,19 @@ export const KeyManagementPage: React.FC = () => {
                       leftIcon={<Play className="w-3 h-3" />}
                     >
                       Test
+                    </Button>
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        const def = p.models.find((m) => m.isDefault) || p.models[0];
+                        handleOpenChatPlayground(def?.modelId);
+                      }}
+                      disabled={!p.hasApiKey}
+                      leftIcon={<MessageSquare className="w-3 h-3" />}
+                    >
+                      Chat
                     </Button>
 
                     {isCustom && (
@@ -714,6 +852,142 @@ export const KeyManagementPage: React.FC = () => {
             <Button variant="primary" size="md" onClick={handleSaveKey} isLoading={savingKey}>
               Save & Encrypt
             </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ────────────────── MODAL: AI Chat Playground ────────────────── */}
+      <Modal
+        isOpen={isChatPlaygroundOpen}
+        onClose={() => setIsChatPlaygroundOpen(false)}
+        title="AI Chat Playground (ทดสอบคุยจริง & เช็ก Token)"
+        description="ทดสอบยิงข้อความจริงไปยังโมเดลที่เลือก ตรวจสอบความเร็ว (ms), ปริมาณ Token ที่กิน และเช็กระบบ Auto-Failover สดๆ"
+      >
+        <div className="space-y-4">
+          {/* Model Selector */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+              เลือกโมเดลที่ต้องการทดสอบ (Model to Test)
+            </label>
+            <CustomDropdown
+              options={playgroundModelOptions}
+              value={testChatModelId}
+              onChange={(val: string) => setTestChatModelId(val)}
+              placeholder="เลือกโมเดลที่จะทดสอบ..."
+            />
+          </div>
+
+          {/* Quick Prompts */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] text-slate-400 font-medium">ตัวอย่างคำถาม:</span>
+            {[
+              'สวัสดีครับคุณเลขา แนะนำตัวหน่อย',
+              'คำนวณเลข 125 * 84 ให้หน่อย',
+              'สรุปข้อดีของ Cloud Run ให้หน่อย',
+            ].map((prompt) => (
+              <button
+                key={prompt}
+                type="button"
+                onClick={() => setTestChatInput(prompt)}
+                className="text-[11px] bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 px-2 py-0.5 rounded-lg transition"
+              >
+                {prompt}
+              </button>
+            ))}
+          </div>
+
+          {/* Chat Messages Area */}
+          <div className="h-64 overflow-y-auto border border-slate-200 dark:border-slate-800 rounded-xl p-3 bg-slate-50 dark:bg-slate-950/60 space-y-3">
+            {testChatMessages.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs text-center space-y-1.5">
+                <Bot className="w-8 h-8 text-slate-300 dark:text-slate-600" />
+                <p className="font-semibold text-slate-600 dark:text-slate-400">ยังไม่มีข้อความทดสอบ</p>
+                <p className="text-[11px] text-slate-400">พิมพ์ข้อความด้านล่างเพื่อเริ่มทดสอบการตอบของโมเดล</p>
+              </div>
+            ) : (
+              testChatMessages.map((msg) => (
+                <div
+                  key={msg.id}
+                  className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
+                >
+                  <div
+                    className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-xs leading-relaxed ${
+                      msg.role === 'user'
+                        ? 'bg-teal-600 text-white rounded-br-none shadow-sm'
+                        : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 rounded-bl-none shadow-sm'
+                    }`}
+                  >
+                    {msg.content}
+                  </div>
+
+                  {/* Metrics under assistant bubble */}
+                  {msg.metrics && (
+                    <div className="flex flex-wrap items-center gap-1.5 mt-1 text-[10px] text-slate-500 dark:text-slate-400">
+                      <span className="bg-slate-200/60 dark:bg-slate-800 px-1.5 py-0.5 rounded font-mono flex items-center gap-0.5">
+                        <Zap className="w-2.5 h-2.5 text-amber-500" />
+                        {msg.metrics.responseTimeMs}ms
+                      </span>
+                      <span className="bg-slate-200/60 dark:bg-slate-800 px-1.5 py-0.5 rounded font-mono">
+                        🪙 {msg.metrics.totalTokens} tokens (in: {msg.metrics.promptTokens}, out: {msg.metrics.completionTokens})
+                      </span>
+                      <span className="bg-slate-200/60 dark:bg-slate-800 px-1.5 py-0.5 rounded font-mono">
+                        💵 ${msg.metrics.estimatedCostUsd.toFixed(6)}
+                      </span>
+                      {msg.metrics.wasFailover ? (
+                        <span
+                          className="bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded font-semibold"
+                          title={msg.metrics.failoverReason}
+                        >
+                          ⚠️ Failover to {msg.metrics.modelId}
+                        </span>
+                      ) : (
+                        <span className="bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded font-semibold">
+                          🟢 {msg.metrics.modelId}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Chat Input & Controls */}
+          <div className="flex items-center space-x-2">
+            <input
+              type="text"
+              value={testChatInput}
+              onChange={(e) => setTestChatInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSendTestChat()}
+              placeholder="พิมพ์ข้อความทดสอบคุยกับ AI..."
+              disabled={isTestChatSending}
+              className="flex-1 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2.5 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-500"
+            />
+            <Button
+              variant="primary"
+              size="md"
+              onClick={handleSendTestChat}
+              isLoading={isTestChatSending}
+              leftIcon={<Send className="w-3.5 h-3.5" />}
+              className="bg-teal-600 hover:bg-teal-700 text-white shrink-0"
+            >
+              ส่ง
+            </Button>
+          </div>
+
+          <div className="flex items-center justify-between pt-1 border-t border-slate-100 dark:border-slate-800 text-[11px] text-slate-400">
+            <span>
+              {testChatModelId ? `โมเดลที่กำลังเทส: ${testChatModelId}` : 'โหมด Auto-Failover (คัดลอกตาม Production)'}
+            </span>
+            {testChatMessages.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setTestChatMessages([])}
+                className="text-slate-400 hover:text-red-500 transition"
+              >
+                ล้างบทสนทนา
+              </button>
+            )}
           </div>
         </div>
       </Modal>
