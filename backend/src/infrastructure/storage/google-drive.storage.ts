@@ -12,12 +12,23 @@ export class GoogleDriveStorageService implements IStorageService {
   }
 
   private initClient(): void {
+    const oauthClientId = process.env.GOOGLE_CLIENT_ID;
+    const oauthClientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    const oauthRefreshToken = process.env.GOOGLE_REFRESH_TOKEN;
     const serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
     const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
     const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n');
 
     try {
-      if (serviceAccountJson) {
+      if (oauthClientId && oauthClientSecret && oauthRefreshToken) {
+        const oauth2Client = new google.auth.OAuth2(
+          oauthClientId,
+          oauthClientSecret
+        );
+        oauth2Client.setCredentials({ refresh_token: oauthRefreshToken });
+        this.driveClient = google.drive({ version: 'v3', auth: oauth2Client });
+        console.log('✅ GoogleDriveStorageService: Initialized with OAuth2 (User 5TB Drive)');
+      } else if (serviceAccountJson) {
         const credentials = JSON.parse(serviceAccountJson);
         const auth = new google.auth.GoogleAuth({
           credentials,
