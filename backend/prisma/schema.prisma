@@ -1,0 +1,171 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ─── 0. Admin User for Dashboard Authentication ───
+model AdminUser {
+  id           String   @id @default(uuid())
+  username     String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// ─── 1. Provider API Keys (Encrypted with AES-256-GCM) ───
+model ProviderKey {
+  id              String           @id @default(uuid())
+  providerName    String           // "gemini" | "openai" | "claude" | "openai_compatible"
+  displayName     String           // e.g. "Google Gemini", "OpenAI Production"
+  apiKeyEncrypted String           // AES-256-GCM ciphertext format: iv:tag:ciphertext
+  baseUrl         String?          // Used for OpenAI-compatible custom endpoints
+  isActive        Boolean          @default(true)
+  priorityOrder   Int              @default(0) // Lowest number = highest priority in failover
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  models          AvailableModel[]
+
+  @@index([providerName, isActive])
+  @@index([priorityOrder])
+}
+
+// ─── 2. Available Models per Provider (1:N) ───
+model AvailableModel {
+  id          String      @id @default(uuid())
+  providerId  String
+  provider    ProviderKey @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  modelId     String      // e.g. "gpt-4o", "gemini-2.0-flash", "claude-3-5-sonnet"
+  displayName String      // e.g. "GPT-4o", "Gemini 2.0 Flash"
+  isDefault   Boolean     @default(false)
+  maxTokens   Int?
+  createdAt   DateTime    @default(now())
+
+  @@unique([providerId, modelId])
+  @@index([modelId])
+}
+
+// ─── 3. Bot Channel Credentials (LINE & Telegram managed via Web UI) ───
+model BotChannel {
+  id                    String    @id @default(uuid())
+  platform              String    @unique // "line" | "telegram" (1 record per platform)
+  lineChannelSecret     String?   // AES-256-GCM encrypted
+  lineAccessToken       String?   // AES-256-GCM encrypted
+  telegramBotToken      String?   // AES-256-GCM encrypted
+  telegramWebhookSecret String?   // Webhook secret header verification
+  isActive              Boolean   @default(true)
+  webhookUrl            String?   // Displayed on UI for copying into Bot developer console
+  lastVerifiedAt        DateTime?
+  botDisplayName        String?
+  botAvatarUrl          String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+}
+
+// ─── 4. System Prompt / Bot Persona ───
+model SystemPrompt {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  content   String   @db.Text
+  isActive  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── 5. User Preferences (/model command per user) ───
+model UserPreference {
+  id             String   @id @default(uuid())
+  platform       String   // "line" | "telegram"
+  userId         String
+  preferredModel String?
+  updatedAt      DateTime @updatedAt
+
+  @@unique([platform, userId])
+}
+
+// ─── 6. Conversation History (Capped at 20 messages per session) ───
+model ConversationHistory {
+  id        String   @id @default(uuid())
+  platform  String   // "line" | "telegram"
+  sessionId String   // LINE userId / Telegram chatId
+  role      String   // "system" | "user" | "assistant"
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([platform, sessionId, createdAt])
+}
+
+// ─── 7. Push Message Log (Watched live via SSE) ───
+model PushMessageLog {
+  id             String   @id @default(uuid())
+  platform       String   // "line" | "telegram"
+  targetId       String
+  messageContent String   @db.Text
+  status         String   // "SUCCESS" | "FAILED"
+  errorMessage   String?
+  sourceTrigger  String   @default("api") // "api" | "cron" | "manual_ui"
+  createdAt      DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([platform, status])
+}
+
+// ─── 8. Usage Log (Token tracking & Cost estimation) ───
+model UsageLog {
+  id               String   @id @default(uuid())
+  platform         String   // "line" | "telegram"
+  userId           String
+  providerName     String
+  modelId          String
+  promptTokens     Int
+  completionTokens Int
+  totalTokens      Int
+  estimatedCostUsd Float    @default(0)
+  responseTimeMs   Int?
+  wasFailover      Boolean  @default(false)
+  createdAt        DateTime @default(now())
+
+  @@index([providerName, createdAt])
+  @@index([userId, createdAt])
+  @@index([createdAt])
+}
+
+// ─── 9. Receipt / Expense Bill (Saved to Google Drive & Vision AI Extracted) ───
+model ReceiptBill {
+  id                  String    @id @default(uuid())
+  platform            String    // "line" | "telegram"
+  userId              String
+  merchantName        String?   // e.g. "7-Eleven", "PTT Station", "Makro"
+  totalAmount         Float     // Total parsed bill amount
+  currency            String    @default("THB")
+  billDate            DateTime? // Date stated on bill
+  category            String?   // e.g. "Food", "Fuel", "Office Supplies"
+  summaryText         String?   @db.Text
+  itemsJson           String?   @db.Text // JSON string of parsed line items
+  googleDriveFileId   String?   // Google Drive 5TB file ID
+  googleDriveViewUrl  String?   // Direct web view URL
+  createdAt           DateTime  @default(now())
+
+  @@index([platform, userId])
+  @@index([createdAt])
+}
+
+// ─── 10. Secretary Task & Reminder (Proactive Minor Push) ───
+model TaskReminder {
+  id            String    @id @default(uuid())
+  platform      String    // "line" | "telegram"
+  userId        String
+  title         String    // Task title or reminder content
+  remindAt      DateTime  // Scheduled reminder time
+  isCompleted   Boolean   @default(false)
+  isNotified    Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+
+  @@index([platform, userId])
+  @@index([remindAt, isNotified])
+}
+

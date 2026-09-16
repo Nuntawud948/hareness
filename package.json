@@ -1,0 +1,37 @@
+{
+  "name": "multi-llm-bot-harness",
+  "version": "1.0.0",
+  "description": "Standalone Multi-LLM Provider Router for LINE & Telegram following Clean Architecture",
+  "private": true,
+  "scripts": {
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "dev": "concurrently -n \"backend,frontend\" -c \"blue,green\" \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "build:backend": "npm --prefix backend run build",
+    "build:frontend": "npm --prefix frontend run build",
+    "build": "npm run build:backend && npm run build:frontend",
+    "test:backend": "npm --prefix backend run test",
+    "test": "npm run test:backend",
+    "prisma:generate": "npm --prefix backend run prisma:generate",
+    "prisma:migrate": "npm --prefix backend run prisma:migrate",
+    "prisma:seed": "npm --prefix backend run prisma:seed",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "start": "npm --prefix backend run start"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "keywords": [
+    "clean-architecture",
+    "line-bot",
+    "telegram-bot",
+    "llm-harness",
+    "gemini",
+    "openai",
+    "claude",
+    "deepseek"
+  ],
+  "author": "",
+  "license": "MIT"
+}
