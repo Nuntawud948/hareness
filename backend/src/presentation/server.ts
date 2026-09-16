@@ -196,6 +196,8 @@ export async function buildServer() {
   const { GoogleDriveStorageService } = await import('../infrastructure/storage/google-drive.storage.js');
   const { GeminiVisionReceiptScanner } = await import('../infrastructure/llm/gemini-vision.service.js');
   const { ProcessReceiptImageUseCase } = await import('../application/use-cases/process-receipt-image.use-case.js');
+  const { ArchiveMonthlyLogsUseCase } = await import('../application/use-cases/archive-monthly-logs.use-case.js');
+  const { registerArchiveController } = await import('./controllers/archive.controller.js');
 
   const storageService = new GoogleDriveStorageService();
   const visionScanner = new GeminiVisionReceiptScanner();
@@ -208,6 +210,8 @@ export async function buildServer() {
     storageService,
     visionScanner
   );
+
+  const archiveMonthlyLogsUseCase = new ArchiveMonthlyLogsUseCase(prisma, storageService);
 
   // Server Base URL for Webhook generation
   const serverBaseUrl = process.env.SERVER_URL || `http://localhost:${process.env.PORT || 3000}`;
@@ -228,6 +232,7 @@ export async function buildServer() {
   registerPromptRoutes(app, manageSystemPromptUseCase);
   registerPushRoutes(app, sendPushMessageUseCase, sseManager);
   registerUsageRoutes(app, getUsageStatsUseCase);
+  registerArchiveController(app, archiveMonthlyLogsUseCase);
 
   // Health check endpoint
   app.get('/health', async () => {
